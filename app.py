@@ -23,7 +23,7 @@ BASE = Path(__file__).parent
 URL = E("BASE_URL", "http://localhost:8000").rstrip("/")
 NTFY = E("NTFY_TOPIC", "").strip()  # ex. https://ntfy.sh/zephon-xxxx : les alertes arrivent sur ton téléphone
 TECH = "Un problème technique est survenu. Nous nous en occupons."
-SYSTEM = "Tu es Zephon, un assistant IA clair, précis et chaleureux. Réponds dans la langue de l'utilisateur."
+SYSTEM = "Tu es Zephon, un assistant IA clair, précis et chaleureux. Réponds dans la langue de l'utilisateur. Si l'utilisateur demande des photos ou des images, utilise l'outil image_search."
 
 app = FastAPI(docs_url=None, redoc_url=None)
 app.add_middleware(SessionMiddleware, secret_key=E("SESSION_SECRET") or secrets.token_hex(32),
@@ -72,15 +72,38 @@ def limit(req: Request, n=20, key="chat"):
     if len(q) >= n: raise HTTPException(429, "Doucement ! Attends une minute avant d'envoyer un nouveau message.")
     q.append(now)
 
-TOOLS = [{"type": "function", "function": {"name": "web_search",
-    "description": "Cherche sur le web. À utiliser pour l'actualité, les prix, la météo, les scores, les faits récents ou tout ce dont tu n'es pas sûr.",
-    "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}}]
+TOOLS = [
+    {"type": "function", "function": {"name": "web_search",
+        "description": "Cherche sur le web. À utiliser pour l'actualité, les prix, la météo, les scores, les faits récents ou tout ce dont tu n'es pas sûr.",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
+    {"type": "function", "function": {"name": "image_search",
+        "description": "Cherche des photos ou images sur le web. À utiliser dès que l'utilisateur demande des images/photos ou veut montrer à quoi ressemble quelque chose.",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
+]
 
 def sse(o): return f"data: {json.dumps(o, ensure_ascii=False)}\n\n"
 
 def web(q):
     try: return list(DDGS().text(q, max_results=5)) if DDGS else []
     except Exception: return []
+
+def imgs(q):
+    """Recherche d'images (gratuite, DuckDuckGo). Renvoie [{'t', 'u'}] ou []."""
+    if not DDGS: return []
+    res, vus = [], set()
+    mots = q.split()
+    essais = (q, " ".join(mots[-4:]), " ".join(mots[:4])) if len(mots) >= 5 else (q,)
+    for essai in essais:
+        try:
+            for x in DDGS().images(f"{essai} photo", max_results=6):
+                u = str(x.get("image", ""))
+                if u.startswith("https://") and u not in vus:
+                    vus.add(u)
+                    res.append({"t": x.get("title", "")[:100], "u": u})
+            if len(res) >= 4: break
+        except Exception:
+            continue
+    return res[:4]
 
 def sysmsg(extra=""):
     return {"role": "system", "content": f"{SYSTEM} Date du jour : {date.today():%d/%m/%Y}.{extra}"}
@@ -117,22 +140,31 @@ async def run_one(prov, model, msgs, st):
                             yield f"data: {d}\n\n"
                         for tc in ch.get("tool_calls") or []:
                             f = tc.get("function") or {}
-                            if f.get("name"): calls.append(f.get("arguments") or "")
-                            elif calls: calls[-1] += f.get("arguments") or ""
+                            if f.get("name"):
+                                calls.append({"n": f.get("name"), "a": f.get("arguments") or ""})
+                            elif calls: calls[-1]["a"] += f.get("arguments") or ""
                 if not calls: break
-                qs = []
-                for a in calls[:2]:
-                    try: qs.append(str(json.loads(a or "{}").get("query", "")).strip())
-                    except Exception: pass
-                qs = [q for q in qs if q]
-                if not qs: can_search = False; continue
-                for q in qs:
+                todo = []
+                for call in calls[:2]:
+                    try: q = str(json.loads(call["a"] or "{}").get("query", "")).strip()
+                    except Exception: q = ""
+                    if q: todo.append((call["n"] == "image_search", q))
+                if not todo: can_search = False; continue
+                for is_img, q in todo:
                     st["sent"] = True
-                    yield sse({"status": {"type": "search", "q": q}})
-                    res = await asyncio.to_thread(web, q)
-                    sources += [{"t": x.get("title", ""), "u": x.get("href", "")} for x in res]
-                    extra += f"\n\nRésultats de recherche web pour « {q} » :\n" + (
-                        "\n".join(f"- {x.get('title', '')} ({x.get('href', '')}) : {x.get('body', '')}" for x in res) or "(aucun résultat)")
+                    if is_img:
+                        yield sse({"status": {"type": "images", "q": q}})
+                        res = await asyncio.to_thread(imgs, q)
+                        yield sse({"images": res})
+                        extra += f"\n\nImages trouvées pour « {q} » : " + (
+                            ", ".join(x["u"] for x in res) or "(aucune)"
+                        ) + "\nMentionne-les brièvement si pertinent, sans recopier les liens."
+                    else:
+                        yield sse({"status": {"type": "search", "q": q}})
+                        res = await asyncio.to_thread(web, q)
+                        sources += [{"t": x.get("title", ""), "u": x.get("href", "")} for x in res]
+                        extra += f"\n\nRésultats de recherche web pour « {q} » :\n" + (
+                            "\n".join(f"- {x.get('title', '')} ({x.get('href', '')}) : {x.get('body', '')}" for x in res) or "(aucun résultat)")
                 extra += "\n\nUtilise ces résultats pour répondre, sans inventer ce qu'ils ne disent pas. Dis-le si la recherche n'a rien donné."
                 searched = True
             if sources: yield sse({"sources": sources[:8]})
