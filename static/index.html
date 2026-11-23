@@ -122,6 +122,7 @@ dialog input:focus,dialog select:focus{border-color:#55555c}
 .q{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--mut);animation:fade .3s}.q svg{width:16px;height:16px;flex-shrink:0;animation:spin 2.4s linear infinite}.q span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @keyframes spin{to{transform:rotate(360deg)}}
 .src{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-family:Geist,system-ui,sans-serif}.src a{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#c9c9ce;background:var(--panel2);border-radius:999px;padding:5px 11px 5px 9px;text-decoration:none;transition:.2s}.src a:hover{background:#303034;color:#fff;transform:translateY(-1px)}.src svg{width:13px;height:13px}
+.imgs{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.imgs a{display:block;border-radius:10px;overflow:hidden;border:1px solid var(--line);transition:.2s}.imgs a:hover{border-color:var(--acc);transform:translateY(-1px)}.imgs img{display:block;width:132px;height:96px;object-fit:cover;background:var(--panel2)}
 .bot pre span.c{color:#6b7280}.bot pre span.s{color:#98c379}.bot pre span.n{color:#d19a66}.bot pre span.k{color:#c678dd}.bot pre span.f{color:#61afef}
 @keyframes fly{from{opacity:0;transform:translate(18px,34px) scale(.88)}}
 .user{animation:fly .55s cubic-bezier(.2,.9,.3,1.2)}.think{animation:fly .5s cubic-bezier(.2,.9,.3,1.2)}
@@ -241,7 +242,7 @@ function renderAcct(){const a=$("#acct"),n=nm();
   a.innerHTML=(user?`<div class="me" style="cursor:default">${avHTML(photo(),n)}<b>${esc(n||"Mon compte")}</b></div>`:OAUTH+`<small>Sans compte, tes discussions restent sur cet appareil.</small>`)+`<button class="me" id="gear">${GEAR}<b>Paramètres</b></button>`;
   bindOauth(a);bindCam(a);$("#gear").onclick=()=>openSet()}
 function openChat(c){if(busy)return;cur=c;messages=c.msgs;chat.innerHTML="";
-  messages.forEach(m=>{const d=document.createElement("div");if(m.role==="user"){d.className="msg user";d.textContent=m.content}else{d.className="msg bot";d.innerHTML=md(m.content)+srcHTML(m.src)}chat.appendChild(d)});
+  messages.forEach(m=>{const d=document.createElement("div");if(m.role==="user"){d.className="msg user";d.textContent=m.content}else{d.className="msg bot";d.innerHTML=md(m.content)+srcHTML(m.src)+imgHTML(m.imgs)}chat.appendChild(d)});
   closeMenu();renderList();down(true)}
 
 /* ---------- réglages ---------- */
@@ -321,7 +322,10 @@ function md(t){
 const ZB=(()=>{const a=[];for(let r=0;r<12;r++)for(let c=0;c<12;c++)a.push(r<2||r>9||(c>=10-r&&c<=12-r));return a})();
 const GLOBE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>';
 function setStatus(s){const el=document.querySelector(".think");if(!el)return;const l=el.querySelector("#lbl");l.dataset.lock="1";
-  if(s.type==="search"){l.textContent="Recherche dans le web";let q=el.querySelector(".q");if(!q){q=document.createElement("div");q.className="q";el.appendChild(q)}q.innerHTML=GLOBE+"<span></span>";q.querySelector("span").textContent=s.q}}
+  if(s.type==="search"){l.textContent="Recherche dans le web";let q=el.querySelector(".q");if(!q){q=document.createElement("div");q.className="q";el.appendChild(q)}q.innerHTML=GLOBE+"<span></span>";q.querySelector("span").textContent=s.q}
+  if(s.type==="images"){l.textContent="Recherche d'images "+(s.q||"");let q=el.querySelector(".q");if(!q){q=document.createElement("div");q.className="q";el.appendChild(q)}q.innerHTML=IMG+"<span></span>";q.querySelector("span").textContent=s.q}}
+const IMG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>';
+const imgHTML=s=>{if(!s||!s.length)return"";const f=s.filter(x=>/^https:/.test(x.u)).slice(0,4);return f.length?'<div class="imgs">'+f.map(x=>`<a href="${esc(x.u)}" target="_blank" rel="noopener noreferrer" title="${esc(x.t||"")}"><img src="${esc(x.u)}" alt="" loading="lazy" onerror="this.parentNode.remove()"></a>`).join("")+"</div>":""};
 const srcHTML=s=>{const seen=new Set(),a=[];(s||[]).forEach(x=>{try{const u=new URL(x.u);if(!/^https?:$/.test(u.protocol))return;const h=u.hostname.replace(/^www\./,"");if(seen.has(h))return;seen.add(h);a.push(`<a href="${esc(u.href)}" target="_blank" rel="noopener noreferrer">${GLOBE}${esc(h)}</a>`)}catch{}});return a.length?'<div class="src">'+a.join("")+"</div>":""};
 function thinking(){
   const el=document.createElement("div");el.className="think";
@@ -344,7 +348,7 @@ async function go(){
   const u=document.createElement("div");u.className="msg user";u.textContent=q;chat.appendChild(u);down(true);cmp.classList.remove("sent");void cmp.offsetWidth;cmp.classList.add("sent");
   messages.push({role:"user",content:q});setBusy(true);
   const stopThink=thinking();ctrl=new AbortController();
-  let bot=null,full="",shown=0,src=null;
+  let bot=null,full="",shown=0,src=null,imgs=null;
   try{
     const r=await fetch("/api/chat",{method:"POST",signal:ctrl.signal,headers:{"Content-Type":"application/json"},body:JSON.stringify({model:sel.value,messages:messages.map(({role,content})=>({role,content}))})});
     if(!r.ok){let m="";try{m=(await r.json()).detail||""}catch{}const x=new Error(m||TECH);x.user=r.status===429;throw x}
@@ -356,13 +360,14 @@ async function go(){
         if(j.error)throw new Error(TECH);
         if(j.status){setStatus(j.status);continue}
         if(j.sources){src=j.sources;continue}
+        if(j.images){imgs=j.images;continue}
         const t=j.choices?.[0]?.delta?.content;if(t){full+=t;
           if(!bot){stopThink();bot=document.createElement("div");bot.className="msg bot";chat.appendChild(bot)}
           render()}}}
   }catch(e){stopThink();if(e.name!=="AbortError"&&my===gen)showErr(e.user?e.message:TECH)}
   stopThink();
   if(my!==gen){setBusy(false);ctrl=null;return}
-  if(bot){bot.innerHTML=md(full)+srcHTML(src);messages.push({role:"assistant",content:full,src})}
+  if(bot){bot.innerHTML=md(full)+srcHTML(src)+imgHTML(imgs);messages.push({role:"assistant",content:full,src,imgs})}
   else{messages.pop();u.remove();inp.value=q;inp.oninput();if(!messages.length){chats=chats.filter(c=>c!==cur);cur=null;if(!chat.children.length)empty()}}
   saveC();renderList();setBusy(false);ctrl=null;down(true);
   function render(){
